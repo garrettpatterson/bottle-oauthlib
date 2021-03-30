@@ -175,10 +175,12 @@ class BottleOAuth2(object):
                     resp_headers, resp_body, resp_status = self._oauthlib.create_token_response(
                         uri, http_method, body, headers, credentials_extra
                     )
+                    
+                    print("body:" +  resp_body)
                 except OAuth2Error as e:
                     resp_headers, resp_body, resp_status = e.headers, e.json, e.status_code
                 set_response(bottle.request, bottle.response, resp_status,
-                             resp_headers, resp_body)
+                             resp_headers, resp_body, force_json=True)
 
                 func_response = f(*args, **kwargs)
                 if func_response:
@@ -239,13 +241,34 @@ class BottleOAuth2(object):
                 return bottle.response
             return wrapper
         return decorator
-
-    def create_authorization_response(self):
+        
+    def validate_authorization_request(self):
         def decorator(f):
             @functools.wraps(f)
             def wrapper(*args, **kwargs):
                 assert self._oauthlib, "BottleOAuth2 not initialized with OAuthLib"
 
+
+                uri, http_method, body, headers = extract_params(bottle.request)
+                valid, req = self._oauthlib.validate_authorization_request(uri, http_method, body, headers)
+
+
+                if valid:
+                    return f(*args, **kwargs)
+
+                # Framework specific HTTP 403
+                # do something more specific here?
+                return HTTPError(403, "Permission denied")
+            return wrapper
+        return decorator
+        
+        
+    def create_authorization_response(self):
+        def decorator(f):
+            @functools.wraps(f)
+            def wrapper(*args, **kwargs):
+                assert self._oauthlib, "BottleOAuth2 not initialized with OAuthLib"
+                
                 uri, http_method, body, headers = extract_params(bottle.request)
                 scope = bottle.request.params.get('scope', '').split(' ')
 
@@ -253,6 +276,7 @@ class BottleOAuth2(object):
                     resp_headers, resp_body, resp_status = self._oauthlib.create_authorization_response(
                         uri, http_method=http_method, body=body, headers=headers, scopes=scope
                     )
+
                 except FatalClientError as e:
                     if self._error_uri:
                         raise bottle.HTTPResponse(status=302, headers={"Location": add_params_to_uri(
